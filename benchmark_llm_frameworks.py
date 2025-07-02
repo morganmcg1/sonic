@@ -107,10 +107,10 @@ class VLLMBenchmark:
                 trust_remote_code=True,
                 max_model_len=2048,
                 gpu_memory_utilization=0.8 if self.has_gpu() else 0.0,
-                tensor_parallel_size=1,
-                dtype="float32"  # Match MAX's float32 precision
+                tensor_parallel_size=1
+                # Using vLLM's default precision (fp16) for optimal performance
             )
-            print("vLLM model loaded successfully with float32 precision")
+            print("vLLM model loaded successfully with default precision")
         except Exception as e:
             print(f"Error loading vLLM model: {e}")
             raise
@@ -553,14 +553,14 @@ def print_configuration_info():
     print("FRAMEWORK CONFIGURATION COMPARISON")
     print("="*80)
     print("vLLM Configuration:")
-    print("  - Model precision: float32 (to match MAX)")
+    print("  - Model precision: fp16 (vLLM default for optimal performance)")
     print("  - Temperature: 0.0 (greedy decoding)")
     print("  - Top-p: 1.0 (disabled nucleus sampling)")
     print("  - Max model length: 2048")
     print("  - Trust remote code: True")
     print()
     print("MAX Configuration:")
-    print("  - Model precision: float32 (explicit)")
+    print("  - Model precision: float32 (MAX default)")
     print("  - Temperature: DEFAULT (not configurable via CLI)")
     print("  - Top-p: DEFAULT (not configurable via CLI)")
     print("  - Max new tokens: Set per scenario")
