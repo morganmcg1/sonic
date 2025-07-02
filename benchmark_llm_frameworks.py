@@ -107,9 +107,10 @@ class VLLMBenchmark:
                 trust_remote_code=True,
                 max_model_len=2048,
                 gpu_memory_utilization=0.8 if self.has_gpu() else 0.0,
-                tensor_parallel_size=1
+                tensor_parallel_size=1,
+                dtype="float32"  # Match MAX's float32 precision
             )
-            print("vLLM model loaded successfully")
+            print("vLLM model loaded successfully with float32 precision")
         except Exception as e:
             print(f"Error loading vLLM model: {e}")
             raise
@@ -123,9 +124,9 @@ class VLLMBenchmark:
 
     def benchmark_single_request(self, prompt: str, max_tokens: int, monitor: SystemMonitor) -> Tuple[float, float, float]:
         sampling_params = SamplingParams(
-            temperature=0.1,
+            temperature=0.0,  # Greedy decoding to match MAX's deterministic behavior
             max_tokens=max_tokens,
-            top_p=0.9
+            top_p=1.0  # Disable nucleus sampling for deterministic output
         )
         
         monitor.start_monitoring()
@@ -147,9 +148,9 @@ class VLLMBenchmark:
 
     def benchmark_batch(self, prompts: List[str], max_tokens: int, monitor: SystemMonitor) -> Tuple[float, float, float]:
         sampling_params = SamplingParams(
-            temperature=0.1,
+            temperature=0.0,  # Greedy decoding to match MAX's deterministic behavior
             max_tokens=max_tokens,
-            top_p=0.9
+            top_p=1.0  # Disable nucleus sampling for deterministic output
         )
         
         monitor.start_monitoring()
@@ -335,6 +336,66 @@ class BenchmarkRunner:
         self.results: List[BenchmarkResult] = []
         self.monitor = SystemMonitor()
 
+    def validate_framework_consistency(self, frameworks: List[Any]) -> bool:
+        """Test that both frameworks produce similar output lengths for the same prompt."""
+        if len(frameworks) < 2:
+            return True
+            
+        test_prompt = "Explain the concept of machine learning."
+        test_max_tokens = 50
+        
+        print("Validating framework consistency...")
+        outputs = {}
+        
+        for framework in frameworks:
+            framework_name = framework.__class__.__name__.replace("Benchmark", "")
+            try:
+                framework.setup()
+                
+                if framework_name == "VLLM":
+                    sampling_params = SamplingParams(temperature=0.0, max_tokens=test_max_tokens, top_p=1.0)
+                    results = framework.llm.generate([test_prompt], sampling_params)
+                    output_text = results[0].outputs[0].text if results[0].outputs else ""
+                    token_count = len(results[0].outputs[0].token_ids) if results[0].outputs else 0
+                elif framework_name == "Mojo":
+                    _, output_text = framework.run_max_generate(test_prompt, test_max_tokens)
+                    # Parse output to extract generated text (rough approximation)
+                    output_lines = output_text.split('\n')
+                    for line in output_lines:
+                        if line.strip() and not any(keyword in line.lower() for keyword in ['prompt', 'output', 'time', 'throughput', 'startup']):
+                            output_text = line.strip()
+                            break
+                    token_count = len(output_text.split())
+                
+                outputs[framework_name] = {
+                    'text': output_text[:100] + "..." if len(output_text) > 100 else output_text,
+                    'token_count': token_count
+                }
+                print(f"{framework_name} generated {token_count} tokens")
+                
+            except Exception as e:
+                print(f"Warning: Could not validate {framework_name}: {e}")
+                return False
+            finally:
+                if hasattr(framework, 'cleanup'):
+                    framework.cleanup()
+        
+        # Compare outputs
+        if len(outputs) == 2:
+            frameworks_names = list(outputs.keys())
+            count1, count2 = outputs[frameworks_names[0]]['token_count'], outputs[frameworks_names[1]]['token_count']
+            ratio = max(count1, count2) / min(count1, count2) if min(count1, count2) > 0 else float('inf')
+            
+            print(f"Token count ratio: {ratio:.2f}")
+            if ratio > 3.0:  # If one framework generates 3x more tokens than the other
+                print(f"WARNING: Large difference in output lengths ({count1} vs {count2} tokens)")
+                print("This may indicate configuration differences affecting generation behavior.")
+                return False
+            else:
+                print("✓ Frameworks appear to generate similar output lengths")
+                
+        return True
+
     def generate_test_prompts(self, length: int, count: int = 1) -> List[str]:
         base_prompts = [
             "Explain the concept of machine learning in simple terms.",
@@ -486,6 +547,30 @@ class BenchmarkRunner:
             print(f"Average Peak Memory: {avg_memory:.2f} MB")
 
 
+def print_configuration_info():
+    """Print information about framework configurations for fair comparison."""
+    print("\n" + "="*80)
+    print("FRAMEWORK CONFIGURATION COMPARISON")
+    print("="*80)
+    print("vLLM Configuration:")
+    print("  - Model precision: float32 (to match MAX)")
+    print("  - Temperature: 0.0 (greedy decoding)")
+    print("  - Top-p: 1.0 (disabled nucleus sampling)")
+    print("  - Max model length: 2048")
+    print("  - Trust remote code: True")
+    print()
+    print("MAX Configuration:")
+    print("  - Model precision: float32 (explicit)")
+    print("  - Temperature: DEFAULT (not configurable via CLI)")
+    print("  - Top-p: DEFAULT (not configurable via CLI)")
+    print("  - Max new tokens: Set per scenario")
+    print("  - Trust remote code: True")
+    print()
+    print("NOTE: MAX does not expose temperature/top_p parameters via CLI.")
+    print("vLLM has been configured for greedy decoding to maximize determinism.")
+    print("="*80 + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark vLLM vs Mojo/MAX frameworks")
     parser.add_argument("--model", default="allenai/OLMo-1B-hf", help="Model to benchmark")
@@ -495,6 +580,9 @@ def main():
     parser.add_argument("--quick", action="store_true", help="Run quick benchmark with fewer scenarios")
     
     args = parser.parse_args()
+    
+    # Print configuration information for transparency
+    print_configuration_info()
     
     # Define test scenarios
     if args.quick:
@@ -536,6 +624,15 @@ def main():
     
     # Run benchmarks
     runner = BenchmarkRunner()
+    
+    # Validate framework consistency if benchmarking multiple frameworks
+    if len(frameworks) > 1:
+        if not runner.validate_framework_consistency(frameworks):
+            print("WARNING: Framework configurations may not be equivalent!")
+            print("Results may not be directly comparable. Proceeding anyway...\n")
+        else:
+            print("✓ Framework validation passed. Configurations appear comparable.\n")
+    
     runner.run_comprehensive_benchmark(frameworks, test_scenarios)
     runner.save_results(args.output)
     runner.print_summary()

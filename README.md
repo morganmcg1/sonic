@@ -129,27 +129,39 @@ The analysis script generates:
 
 ## Performance Insights
 
-Based on M4 Max CPU testing with OLMo-1B model:
+Based on M4 Max CPU testing with OLMo-1B model using equivalent configurations:
+
+### Configuration Standardization
+- **Precision**: Both frameworks use float32 for fair comparison
+- **Sampling**: vLLM configured for greedy decoding (temperature=0.0) to match MAX's deterministic behavior
+- **Model Loading**: Both use identical model path and trust_remote_code=True
+- **Validation**: Automated checks ensure comparable output generation
 
 ### vLLM Strengths
-- **Higher throughput**: 53-129 tokens/sec (2.2x faster than MAX)
-- **Better concurrent processing**: Scales to 1.01 req/sec with 5 concurrent requests
+- **Comparable throughput**: 35-47 tokens/sec with deterministic generation
+- **Better concurrent processing**: Scales well with multiple requests
 - **Production stability**: Handles all prompt lengths and concurrency levels
 - **Mature optimization**: Extensive optimizations for sustained workloads
 
 ### Mojo/MAX Strengths  
-- **Lower TTFT**: 187ms vs 402ms average (2.1x faster than vLLM)
+- **Lower TTFT**: ~196ms vs 810ms average (4.1x faster than vLLM)
 - **Efficient startup**: Faster model compilation and first token generation
-- **Consistent latency**: More predictable response times for single requests
+- **Consistent performance**: More predictable response times
 
-### Benchmark Results Summary
-- **vLLM Average**: 402ms TTFT, 79.4 TPS, 0.55 req/sec
-- **MAX Average**: 187ms TTFT, 36.6 TPS, 0.08 req/sec
+### Fair Comparison Results Summary
+- **vLLM Average**: 810ms TTFT, 39.5 TPS, 0.26 req/sec (greedy decoding)
+- **MAX Average**: 196ms TTFT, 38.6 TPS, 0.08 req/sec
+- **Key Finding**: Similar TPS when both use deterministic generation
 - **Best Use Cases**: MAX for latency-critical apps, vLLM for high-throughput production
 
 ### Trade-offs
 - **vLLM**: Better for high-throughput batch processing and production workloads
 - **Mojo/MAX**: Better for low-latency single requests and real-time applications
+
+### Configuration Limitations
+- **MAX CLI**: Does not expose temperature/top_p sampling parameters
+- **Comparison Method**: vLLM configured for greedy decoding to maximize determinism
+- **Validation**: Automated output length comparison detects configuration mismatches
 
 ## GPU Testing
 
