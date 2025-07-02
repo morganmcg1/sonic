@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# LLM Benchmarking results and temporary files
+*benchmark_results*.json
+gpu_benchmark_results.json
+max_test/
+llm_benchmark/
+llm_benchmark_gpu/
+benchmark_plots/
