@@ -1,0 +1,64 @@
+LLM FRAMEWORK BENCHMARK REPORT
+==================================================
+Generated: 2025-07-02 17:20:42
+Results file: benchmark_results.json
+Total scenarios tested: 4
+
+VLLM FRAMEWORK SUMMARY
+------------------------------
+Test scenarios: 3
+Model: allenai/OLMo-1B-hf
+Average TTFT: 401.67 ms
+Average TPS: 79.44
+Average Throughput: 0.55 req/s
+Average Memory: 0.00 MB
+Average CPU: 0.0%
+
+MOJO FRAMEWORK SUMMARY
+------------------------------
+Test scenarios: 1
+Model: allenai/OLMo-1B-hf
+Average TTFT: 187.26 ms
+Average TPS: 36.59
+Average Throughput: 0.08 req/s
+Average Memory: 0.00 MB
+Average CPU: 0.0%
+
+DETAILED RESULTS
+------------------------------
+Framework: VLLM
+Scenario: 9→128 tokens, 1 concurrent
+TTFT: 229.51 ms
+TPS: 55.77
+Throughput: 0.44 req/s
+Memory: 0.00 MB
+CPU: 0.0%
+Timestamp: 2025-07-02T17:19:51.190425
+--------------------
+Framework: VLLM
+Scenario: 22→256 tokens, 1 concurrent
+TTFT: 480.41 ms
+TPS: 53.29
+Throughput: 0.21 req/s
+Memory: 0.00 MB
+CPU: 0.0%
+Timestamp: 2025-07-02T17:19:55.994615
+--------------------
+Framework: VLLM
+Scenario: 9→128 tokens, 5 concurrent
+TTFT: 495.09 ms
+TPS: 129.27
+Throughput: 1.01 req/s
+Memory: 0.00 MB
+CPU: 0.0%
+Timestamp: 2025-07-02T17:20:00.945578
+--------------------
+Framework: Mojo
+Scenario: 9→128 tokens, 1 concurrent
+TTFT: 187.26 ms
+TPS: 36.59
+Throughput: 0.08 req/s
+Memory: 0.00 MB
+CPU: 0.0%
+Timestamp: 2025-07-02T17:20:13.967439
+--------------------

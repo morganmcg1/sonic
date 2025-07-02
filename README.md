@@ -127,23 +127,29 @@ The analysis script generates:
 }
 ```
 
-## Performance Insights (Preliminary)
+## Performance Insights
 
-Based on initial M4 Max testing with OLMo-1B model:
+Based on M4 Max CPU testing with OLMo-1B model:
 
 ### vLLM Strengths
-- **Higher throughput**: 55-134 tokens/sec
-- **Better concurrent processing**: Scales well with multiple requests
-- **Mature optimization**: Production-ready with extensive optimizations
+- **Higher throughput**: 53-129 tokens/sec (2.2x faster than MAX)
+- **Better concurrent processing**: Scales to 1.01 req/sec with 5 concurrent requests
+- **Production stability**: Handles all prompt lengths and concurrency levels
+- **Mature optimization**: Extensive optimizations for sustained workloads
 
 ### Mojo/MAX Strengths  
-- **Lower TTFT**: ~197ms vs 229-478ms (vLLM)
-- **Efficient startup**: Faster model compilation
-- **Memory efficiency**: Lower memory footprint per request
+- **Lower TTFT**: 187ms vs 402ms average (2.1x faster than vLLM)
+- **Efficient startup**: Faster model compilation and first token generation
+- **Consistent latency**: More predictable response times for single requests
+
+### Benchmark Results Summary
+- **vLLM Average**: 402ms TTFT, 79.4 TPS, 0.55 req/sec
+- **MAX Average**: 187ms TTFT, 36.6 TPS, 0.08 req/sec
+- **Best Use Cases**: MAX for latency-critical apps, vLLM for high-throughput production
 
 ### Trade-offs
-- **vLLM**: Better for high-throughput batch processing
-- **Mojo/MAX**: Better for low-latency single requests
+- **vLLM**: Better for high-throughput batch processing and production workloads
+- **Mojo/MAX**: Better for low-latency single requests and real-time applications
 
 ## GPU Testing
 
@@ -160,6 +166,38 @@ gcloud compute ssh your-gpu-instance
 python benchmark_llm_frameworks.py --frameworks vllm  # vLLM with GPU
 python benchmark_llm_frameworks.py --frameworks mojo  # MAX with GPU
 ```
+
+### VM Setup Instructions
+
+For GPU testing, we created a GCP VM with the following specifications:
+
+```bash
+# Create L4 GPU VM with Ubuntu 22.04 and Python 3.12
+gcloud compute instances create llm-benchmark-max-gpu \
+    --zone=us-central1-a \
+    --machine-type=g2-standard-4 \
+    --accelerator=count=1,type=nvidia-l4 \
+    --image-family=pytorch-latest-gpu \
+    --image-project=deeplearning-platform-release \
+    --boot-disk-size=100GB \
+    --maintenance-policy=TERMINATE \
+    --metadata="install-nvidia-driver=True"
+```
+
+**Key Requirements for MAX Framework:**
+- **GLIBC 2.32+** (Ubuntu 22.04 has 2.35, satisfies requirement)
+- **Python 3.10+** (GPU images include Python 3.10+)
+- **NVIDIA L4 GPU** for accelerated inference
+- **PyTorch 2.7+** with CUDA support
+
+**VM Setup Process:**
+1. **Created VM** with PyTorch GPU image for CUDA/driver compatibility
+2. **Installed frameworks** using uv (vLLM) and pixi (MAX)
+3. **Cloned repository** from GitHub for code deployment
+4. **Configured environments** using the setup script
+5. **Verified installations** before running benchmarks
+
+The VM configuration ensures both frameworks can leverage GPU acceleration while maintaining compatibility with all dependencies.
 
 ## Troubleshooting
 
