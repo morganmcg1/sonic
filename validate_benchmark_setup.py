@@ -78,18 +78,25 @@ class BenchmarkValidator:
         # Check vLLM optimization environment variables
         vllm_env_vars = {
             "VLLM_USE_V1": "1",
-            "VLLM_ATTENTION_BACKEND": "FLASHINFER",
+            "VLLM_ATTENTION_BACKEND": ["FLASHINFER", "FLASH_ATTN"],
             "VLLM_FLASH_ATTN_FORCE_ENABLE": "1"
         }
         
         for var, expected in vllm_env_vars.items():
             current = os.environ.get(var)
-            passed = current == expected
+            if isinstance(expected, list):
+                passed = current in expected
+                expected_str = " or ".join(f"'{v}'" for v in expected)
+                message = f"Correctly set to '{current}'" if passed else f"Expected {expected_str}, got '{current}'"
+            else:
+                passed = current == expected
+                message = f"Correctly set to '{current}'" if passed else f"Expected '{expected}', got '{current}'"
+            
             self.results.append(ValidationResult(
                 component="Environment",
                 test_name=f"vLLM {var}",
                 passed=passed,
-                message=f"Expected '{expected}', got '{current}'" if not passed else f"Correctly set to '{expected}'",
+                message=message,
                 details={"expected": expected, "actual": current}
             ))
         
