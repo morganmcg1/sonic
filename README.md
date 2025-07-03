@@ -349,24 +349,36 @@ gcloud compute instances create llm-benchmark-l4 \
 # 1. Connect to the benchmarking VM
 gcloud compute ssh llm-benchmark-a100-max --zone=us-central1-b
 
-# 2. Verify GPU and drivers
-nvidia-smi
+# 2. Install Python 3.12 and set as default (REQUIRED)
+sudo apt update && sudo apt install -y software-properties-common
+sudo add-apt-repository ppa:deadsnakes/ppa -y && sudo apt update
+sudo apt install -y python3.12 python3.12-venv python3.12-dev python3.12-pip
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
 
-# 3. Navigate to project (if already cloned) or clone repository
+# 3. Verify GPU and Python
+nvidia-smi && python --version
+
+# 4. Navigate to project (if already cloned) or clone repository
 cd sonic  # if already exists
 # OR
-git clone https://github.com/your-repo/sonic.git && cd sonic
+git clone https://github.com/morganmcg1/sonic.git && cd sonic
 
-# 4. Set environment variables
+# 5. Set environment variables (REQUIRED FOR EVERY SESSION)
 export HF_TOKEN="your_huggingface_token"
+export VLLM_USE_V1=1
+export VLLM_ATTENTION_BACKEND=FLASHINFER
+export VLLM_FLASH_ATTN_FORCE_ENABLE=1  
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export CUDA_VISIBLE_DEVICES=0
 
-# 5. Run complete setup
+# 6. Run complete setup (takes 15-20 minutes)
 ./setup_improved_benchmark.sh
 
-# 6. Validate environment
+# 7. Validate environment
 python validate_benchmark_setup.py
 
-# 7. Run benchmarks
+# 8. Run benchmarks
 ./run_complete_benchmark.sh --quick
 ```
 
@@ -414,7 +426,51 @@ pip install flash-attn --no-build-isolation
 - **NVIDIA Driver**: 550+ (required for MAX compatibility)
 - **CUDA**: 12.4+ (verified working version)
 - **GLIBC**: 2.35+ (Ubuntu 22.04 provides 2.35)
-- **Python**: 3.10+ (included in GPU images)
+- **Python**: 3.12+ (required for optimal performance)
+
+#### VM Setup Requirements & Gotchas
+**⚠️ Critical Setup Steps (Required):**
+1. **Python 3.12 Installation**: GPU VMs come with Python 3.10, but 3.12+ is recommended
+2. **Python Command**: VMs only have `python3`, need to create `python` symlink
+3. **Environment Persistence**: Environment variables don't persist across SSH sessions
+4. **Package Manager**: Install `pip` and upgrade to latest version
+5. **Flash Attention**: Requires compilation, can take 10+ minutes on first install
+
+**🔧 VM Initialization Commands:**
+```bash
+# Connect to VM
+gcloud compute ssh llm-benchmark-a100-max --zone=us-central1-b
+
+# Install Python 3.12 and make it default
+sudo apt update
+sudo apt install -y software-properties-common
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt update
+sudo apt install -y python3.12 python3.12-venv python3.12-dev python3.12-pip
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+python --version  # Should show Python 3.12.x
+
+# Verify GPU and drivers
+nvidia-smi
+```
+
+**🔐 Environment Variables (Set Every Session):**
+```bash
+# Required for every benchmarking session
+export HF_TOKEN="your_huggingface_token"
+export VLLM_USE_V1=1
+export VLLM_ATTENTION_BACKEND=FLASHINFER  
+export VLLM_FLASH_ATTN_FORCE_ENABLE=1
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export CUDA_VISIBLE_DEVICES=0
+```
+
+**⏱️ Expected Setup Times:**
+- Environment setup: 15-20 minutes
+- Flash Attention compilation: 5-10 minutes  
+- Full benchmark (quick): ~10 minutes
+- Full benchmark (complete): ~30 minutes
 
 #### Memory Management Tips
 - **Monitor Usage**: `nvidia-smi -l 1` for real-time monitoring
