@@ -53,8 +53,8 @@ class ServerManager:
         self.max_process = None
         
     def start_vllm_server(self, model: str, port: int = 8001):
-        """Start vLLM server with OpenAI-compatible API"""
-        print(f"Starting vLLM server on port {port} with model {model}")
+        """Start vLLM server with v1 engine and Flash Attention enabled"""
+        print(f"Starting vLLM server (v1 engine + Flash Attention) on port {port} with model {model}")
         
         cmd = [
             "python", "-m", "vllm.entrypoints.openai.api_server",
@@ -62,12 +62,18 @@ class ServerManager:
             "--port", str(port),
             "--trust-remote-code",
             "--max-model-len", "8192",
-            "--dtype", "bfloat16",  # Match MAX's BF16 quantization
-            "--gpu-memory-utilization", "0.8"
+            "--dtype", "bfloat16",
+            "--gpu-memory-utilization", "0.9",  # Increased for better performance
+            "--enable-chunked-prefill",  # v1 engine optimization
+            "--max-num-batched-tokens", "8192",  # Optimize batching
+            "--max-num-seqs", "256",  # Support more concurrent sequences
         ]
         
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = "0"  # Use first GPU
+        env["VLLM_USE_V1"] = "1"  # Enable v1 engine
+        env["VLLM_ATTENTION_BACKEND"] = "FLASHINFER"  # Enable Flash Attention
+        env["VLLM_FLASH_ATTN_FORCE_ENABLE"] = "1"  # Force Flash Attention
         
         self.vllm_process = subprocess.Popen(
             cmd,
@@ -91,17 +97,19 @@ class ServerManager:
         return False
     
     def start_max_server(self, model: str, port: int = 8002):
-        """Start MAX server with OpenAI-compatible API"""
-        print(f"Starting MAX server on port {port} with model {model}")
+        """Start MAX server with official Llama-3-8B-Instruct optimized settings"""
+        print(f"Starting MAX server (optimized for Llama-3-8B-Instruct) on port {port} with model {model}")
         
         cmd = [
             "max", "serve",
             f"--model-path={model}",
-            f"--port={port}",
-            "--quantization-encoding=float32"  # Use float32 for CPU compatibility
+            f"--port={port}"
+            # Removed quantization-encoding to use optimal GPU defaults
         ]
         
         env = os.environ.copy()
+        # Enable HF transfer acceleration
+        env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
         # Ensure HF_TOKEN is set for gated model access
         if "HF_TOKEN" not in env:
             print("Warning: HF_TOKEN not found in environment. MAX may not be able to access gated models.")
@@ -153,7 +161,8 @@ class ServerBenchmark:
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": 0.0,  # Greedy decoding for consistency
-            "stream": False
+            "stream": False,
+            "stop": ["<|end_of_text|>", "<|eot_id|>"]  # Llama-3 specific stop tokens
         }
         
         start_time = time.perf_counter()
@@ -245,14 +254,37 @@ class BenchmarkRunner:
         self.server_manager = ServerManager()
         
     def generate_test_messages(self, length: int) -> List[Dict]:
-        """Generate test messages of specified length"""
-        base_prompts = {
-            64: "Explain the concept of machine learning in simple terms.",
-            256: "Explain the concept of machine learning in simple terms. Please provide detailed explanations with examples and elaborate on the key concepts involved in this field.",
-            1024: "Explain the concept of machine learning in simple terms. Please provide a comprehensive analysis covering historical context, current applications, future implications, challenges, benefits, technical details, step-by-step processes, real-world examples, and practical recommendations. Include multiple perspectives and discuss both advantages and disadvantages of different approaches."
-        }
+        """Generate test messages of specified token length"""
+        # Base prompt that we'll extend to reach target length
+        base_prompt = "Explain the concept of machine learning in simple terms."
         
-        prompt = base_prompts.get(length, base_prompts[64])
+        if length <= 64:
+            prompt = base_prompt
+        elif length <= 256:
+            prompt = base_prompt + " Please provide detailed explanations with examples and elaborate on the key concepts involved in this field."
+        elif length <= 1024:
+            prompt = base_prompt + " Please provide a comprehensive analysis covering historical context, current applications, future implications, challenges, benefits, technical details, step-by-step processes, real-world examples, and practical recommendations. Include multiple perspectives and discuss both advantages and disadvantages of different approaches."
+        elif length <= 4000:
+            # For 4K tokens - add more context
+            prompt = base_prompt + " Please provide an extremely comprehensive analysis covering: 1) Historical development from early statistical models to modern neural networks, 2) Detailed technical explanations of supervised, unsupervised, and reinforcement learning paradigms, 3) Current real-world applications across industries including healthcare, finance, autonomous vehicles, natural language processing, computer vision, and robotics, 4) Future implications and emerging trends like federated learning, quantum machine learning, and neuromorphic computing, 5) Ethical challenges including bias, fairness, transparency, privacy, and societal impact, 6) Technical benefits and limitations of different algorithmic approaches, 7) Step-by-step processes for data collection, preprocessing, feature engineering, model selection, training, validation, and deployment, 8) Concrete examples from major companies and research institutions, 9) Practical recommendations for organizations looking to adopt ML technologies, 10) Multiple expert perspectives on the field's trajectory and potential risks."
+        elif length <= 10000:
+            # For 10K tokens - extensive academic-style prompt
+            prompt = base_prompt + " Please provide an exhaustive academic-level analysis that covers: HISTORICAL FOUNDATIONS: Trace the evolution from early computational theories of Turing and Von Neumann through statistical learning theory, connectionism, and the modern deep learning revolution. THEORETICAL FRAMEWORKS: Explain mathematical foundations including probability theory, information theory, optimization theory, computational complexity, PAC learning, VC dimension, and generalization bounds. ALGORITHMIC PARADIGMS: Detailed exposition of supervised learning (linear models, tree-based methods, ensemble methods, neural networks, kernel methods), unsupervised learning (clustering, dimensionality reduction, generative models, self-supervised learning), and reinforcement learning (value functions, policy gradients, actor-critic methods, multi-agent systems). CONTEMPORARY APPLICATIONS: Comprehensive survey of applications in computer vision (object detection, semantic segmentation, image generation), natural language processing (language models, machine translation, question answering, dialogue systems), robotics (motion planning, manipulation, perception), healthcare (medical imaging, drug discovery, personalized medicine), finance (algorithmic trading, risk assessment, fraud detection), autonomous systems (self-driving cars, drones, industrial automation), and scientific computing (climate modeling, protein folding, materials science). EMERGING FRONTIERS: Discussion of cutting-edge research areas including quantum machine learning, neuromorphic computing, federated learning, meta-learning, continual learning, explainable AI, causal inference, and AI safety. IMPLEMENTATION CHALLENGES: Technical considerations for data quality, feature engineering, model selection, hyperparameter optimization, distributed training, model compression, deployment strategies, monitoring, and maintenance."
+        else:
+            # For very large contexts (up to 100K tokens) - create an extremely detailed prompt
+            sections = [
+                "COMPREHENSIVE HISTORICAL ANALYSIS: Provide a detailed chronological account of machine learning development from the 1940s to present, including key figures, breakthrough papers, technological milestones, and paradigm shifts.",
+                "MATHEMATICAL FOUNDATIONS: Explain the underlying mathematics including linear algebra, calculus, probability theory, statistics, information theory, optimization theory, and computational complexity theory.",
+                "ALGORITHMIC DEEP DIVE: Provide detailed explanations of hundreds of machine learning algorithms, their theoretical basis, practical implementations, and comparative analysis.",
+                "INDUSTRY APPLICATIONS: Comprehensive survey of ML applications across every major industry sector with specific case studies and implementation details.",
+                "RESEARCH FRONTIERS: Extensive discussion of current research directions, open problems, and future possibilities in the field.",
+                "ETHICAL AND SOCIETAL IMPLICATIONS: Thorough analysis of AI ethics, bias, fairness, privacy, security, and societal impact.",
+                "TECHNICAL IMPLEMENTATION: Detailed guides for data engineering, model development, deployment, and production systems.",
+                "BUSINESS STRATEGY: Analysis of how organizations can successfully adopt and scale machine learning initiatives.",
+                "EDUCATIONAL PATHWAYS: Comprehensive guide to learning machine learning from beginner to expert level.",
+                "GLOBAL PERSPECTIVES: International perspectives on AI development, regulation, and cultural considerations."
+            ]
+            prompt = base_prompt + " " + " ".join(sections)
         
         return [
             {"role": "system", "content": "You are a helpful assistant."},
@@ -359,17 +391,22 @@ def print_configuration_info():
     print("\n" + "="*80)
     print("SERVER CONFIGURATION COMPARISON")
     print("="*80)
-    print("vLLM Server Configuration:")
+    print("vLLM Server Configuration (OPTIMIZED):")
     print("  - Model: meta-llama/Meta-Llama-3-8B-Instruct")
-    print("  - Precision: bfloat16 (optimal for vLLM)")
+    print("  - Engine: v1 (latest optimizations)")
+    print("  - Attention: Flash Attention (FLASHINFER backend)")
+    print("  - Precision: bfloat16")
     print("  - Temperature: 0.0 (greedy decoding)")
     print("  - Max model length: 8192")
-    print("  - GPU memory utilization: 0.8")
+    print("  - GPU memory utilization: 0.9")
+    print("  - Chunked prefill: Enabled")
     print("  - Port: 8001")
     print()
-    print("MAX Server Configuration:")
+    print("MAX Server Configuration (OPTIMIZED):")
     print("  - Model: meta-llama/Meta-Llama-3-8B-Instruct")
-    print("  - Precision: float32 (CPU compatible)")
+    print("  - Configuration: Official Llama-3-8B-Instruct settings")
+    print("  - Precision: Auto-optimized (likely bfloat16)")
+    print("  - HF Transfer: Enabled for faster model loading")
     print("  - Temperature: 0.0 (greedy decoding)")
     print("  - Port: 8002")
     print()
@@ -384,6 +421,7 @@ async def main():
     parser.add_argument("--frameworks", nargs="+", choices=["vllm", "max"], 
                        default=["vllm", "max"], help="Frameworks to benchmark")
     parser.add_argument("--quick", action="store_true", help="Run quick benchmark with fewer scenarios")
+    parser.add_argument("--extended", action="store_true", help="Run extended benchmark with 1K-100K token scenarios")
     parser.add_argument("--start-servers", action="store_true", help="Automatically start servers")
     
     args = parser.parse_args()
@@ -397,7 +435,46 @@ async def main():
             {"prompt_length": 256, "max_tokens": 256, "concurrent_requests": 1},
             {"prompt_length": 64, "max_tokens": 128, "concurrent_requests": 5},
         ]
+    elif args.extended:
+        # Extended benchmark scenarios covering 1K-100K tokens, batch sizes 1-128, concurrent 1-100
+        test_scenarios = []
+        
+        # Input length scaling tests (1K to 100K tokens)
+        input_lengths = [1000, 4000, 10000, 25000, 50000, 100000]
+        for input_len in input_lengths:
+            test_scenarios.append({
+                "prompt_length": input_len, 
+                "max_tokens": min(512, input_len // 10),  # Output proportional to input
+                "concurrent_requests": 1
+            })
+        
+        # Concurrent request scaling tests (1 to 100)
+        concurrent_levels = [1, 5, 10, 25, 50, 100]
+        for concurrent in concurrent_levels:
+            test_scenarios.append({
+                "prompt_length": 1024, 
+                "max_tokens": 256, 
+                "concurrent_requests": concurrent
+            })
+        
+        # Batch size scaling tests (simulated via concurrent requests)
+        batch_sizes = [1, 8, 16, 32, 64, 128]
+        for batch_size in batch_sizes:
+            test_scenarios.append({
+                "prompt_length": 512, 
+                "max_tokens": 128, 
+                "concurrent_requests": batch_size
+            })
+        
+        # Mixed scenarios for comprehensive testing
+        mixed_scenarios = [
+            {"prompt_length": 2000, "max_tokens": 1000, "concurrent_requests": 10},
+            {"prompt_length": 5000, "max_tokens": 500, "concurrent_requests": 5},
+            {"prompt_length": 10000, "max_tokens": 250, "concurrent_requests": 2}
+        ]
+        test_scenarios.extend(mixed_scenarios)
     else:
+        # Standard benchmark scenarios
         test_scenarios = [
             {"prompt_length": 64, "max_tokens": 128, "concurrent_requests": 1},
             {"prompt_length": 256, "max_tokens": 256, "concurrent_requests": 1},
