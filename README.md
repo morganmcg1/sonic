@@ -76,7 +76,7 @@ python validate_benchmark_setup.py
 
 # Environment variables  
 VLLM_USE_V1=1                    # Latest v1 engine
-VLLM_ATTENTION_BACKEND=FLASHINFER # Fastest attention
+VLLM_ATTENTION_BACKEND=FLASH_ATTN # Flash Attention backend
 VLLM_FLASH_ATTN_FORCE_ENABLE=1   # Force optimization
 ```
 
@@ -220,7 +220,7 @@ python validate_benchmark_setup.py --output validation_report.json
 # Common fixes
 export HF_TOKEN="your_token"                    # Missing token
 export VLLM_USE_V1=1                           # vLLM optimization  
-export VLLM_ATTENTION_BACKEND=FLASHINFER       # Attention backend
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN       # Flash Attention backend
 export HF_HUB_ENABLE_HF_TRANSFER=1             # MAX optimization
 ```
 
@@ -290,6 +290,193 @@ gcloud config set project your-project-id
 
 # ERROR: "External IP address was not found"
 # SOLUTION: This is normal for IAP tunneling, connection will work
+```
+
+## ⚡ Critical Setup Learnings (Must Read!)
+
+### 🚨 Essential vLLM Setup Requirements
+
+**1. Correct Attention Backend Configuration:**
+```bash
+# ❌ WRONG: Will cause "flashinfer module not found" error
+export VLLM_ATTENTION_BACKEND=FLASHINFER
+
+# ✅ CORRECT: Use with Flash Attention 2.8.0
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+**2. Required Additional Dependencies:**
+```bash
+# Install in vLLM environment before benchmarking
+source vllm_optimized_env/bin/activate
+pip install hf_transfer  # Required for HF_HUB_ENABLE_HF_TRANSFER=1
+```
+
+**3. Flash Attention Installation Process:**
+```bash
+# Step 1: Check PyTorch/CUDA versions for compatibility
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.version.cuda}')"
+
+# Step 2: Download correct pre-compiled wheel (saves 1+ hours vs compilation)
+# For PyTorch 2.7.0 + CUDA 12.6 + Python 3.12:
+wget https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.3.12/flash_attn-2.8.0+cu124torch2.7-cp312-cp312-linux_x86_64.whl
+
+# Step 3: Install wheel
+pip install flash_attn-2.8.0+cu124torch2.7-cp312-cp312-linux_x86_64.whl
+
+# Step 4: Verify installation
+python -c "import flash_attn; print(f'Flash Attention version: {flash_attn.__version__}')"
+```
+
+**4. vLLM Server Startup Expectations:**
+```bash
+# First startup takes 2-3 minutes due to:
+# - Model downloading (~15GB for Llama-3-8B)
+# - CUDA graph compilation (torch.compile)
+# - Flash Attention initialization
+
+# Subsequent startups: ~30-60 seconds
+```
+
+### 🔧 Essential MAX Setup Requirements
+
+**1. Correct Model Path Parameter:**
+```bash
+# ❌ WRONG: Will cause "model-path must be provided" error
+max serve meta-llama/Meta-Llama-3-8B-Instruct
+
+# ✅ CORRECT: Use --model-path parameter
+max serve --model-path meta-llama/Meta-Llama-3-8B-Instruct --port 8002 --host 0.0.0.0
+```
+
+**2. MAX Worker Debugging:**
+```bash
+# Check MAX startup logs for worker issues
+tail -f max_startup.log
+
+# Common issues:
+# - "Worker died" - Usually CUDA/driver compatibility
+# - "GLIBC version" - Requires Ubuntu 22.04+ (GLIBC 2.35+)
+# - "Memory allocation" - GPU memory insufficient
+```
+
+**3. MAX Environment Activation:**
+```bash
+# Navigate to MAX directory first
+cd max_optimized
+
+# Use full path to max binary
+.pixi/envs/default/bin/max serve --model-path meta-llama/Meta-Llama-3-8B-Instruct
+```
+
+### 🎯 Benchmarking Process Best Practices
+
+**1. Sequential Framework Testing (CRITICAL):**
+```bash
+# A100-40GB cannot run both frameworks simultaneously
+# Must clear GPU memory between tests
+
+# Step 1: Run vLLM benchmark
+./start_vllm_optimized.sh
+python benchmark_serving_official.py --backend vllm --port 8001 [options]
+
+# Step 2: Clear GPU memory
+pkill -f vllm
+sleep 10  # Wait for memory clearance
+
+# Step 3: Run MAX benchmark  
+cd max_optimized
+.pixi/envs/default/bin/max serve --model-path meta-llama/Meta-Llama-3-8B-Instruct --port 8002 &
+cd ..
+python benchmark_serving_official.py --backend modular --port 8002 [options]
+```
+
+**2. Memory Monitoring Commands:**
+```bash
+# Monitor GPU memory in real-time
+nvidia-smi -l 1
+
+# Check memory before/after tests
+nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader
+
+# Expected memory usage:
+# - vLLM: ~20-25GB for Llama-3-8B
+# - MAX: ~30-40GB for Llama-3-8B
+```
+
+**3. Environment Variable Persistence:**
+```bash
+# Variables don't persist across SSH sessions!
+# Create a script for easy setup:
+cat > setup_env.sh << 'EOF'
+export HF_TOKEN="your_huggingface_token"
+export VLLM_USE_V1=1
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+export VLLM_FLASH_ATTN_FORCE_ENABLE=1
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export CUDA_VISIBLE_DEVICES=0
+EOF
+
+# Source before each benchmarking session
+source setup_env.sh
+```
+
+### 📊 Expected Performance Benchmarks
+
+**vLLM with Flash Attention 2.8.0 (A100 GPU):**
+```
+✅ Proven Results (meta-llama/Meta-Llama-3-8B-Instruct):
+- Request throughput: ~1.5 req/s
+- Input token throughput: ~350 tok/s  
+- Output token throughput: ~310 tok/s
+- Mean TTFT: ~42ms
+- Mean TPOT: ~15ms
+- Success rate: 100%
+```
+
+**Performance Troubleshooting:**
+```bash
+# If performance is significantly lower:
+# 1. Verify Flash Attention is active
+python -c "import flash_attn; print('Flash Attention available')"
+
+# 2. Check attention backend in server logs
+grep "Using Flash Attention backend" vllm_startup.log
+
+# 3. Verify environment variables
+echo $VLLM_ATTENTION_BACKEND  # Should be FLASH_ATTN
+echo $VLLM_USE_V1            # Should be 1
+
+# 4. Monitor GPU utilization during benchmark
+nvidia-smi -l 1
+```
+
+### 🔄 Quick Debug Commands
+
+**Reset Everything:**
+```bash
+# Kill all processes
+pkill -f vllm; pkill -f "max serve"
+
+# Clear GPU memory
+sleep 10
+
+# Check memory cleared
+nvidia-smi
+
+# Restart from clean state
+source setup_env.sh
+```
+
+**Validation Quick Check:**
+```bash
+# Test vLLM environment
+source vllm_optimized_env/bin/activate && python validate_benchmark_setup.py
+# Should show 23/25 tests passed
+
+# Test individual components
+curl http://localhost:8001/health  # vLLM server health
+curl http://localhost:8002/health  # MAX server health
 ```
 
 ## 🔍 Methodology Details
@@ -414,7 +601,7 @@ git clone https://github.com/morganmcg1/sonic.git && cd sonic
 # 5. Set environment variables (REQUIRED FOR EVERY SESSION)
 export HF_TOKEN="your_huggingface_token"
 export VLLM_USE_V1=1
-export VLLM_ATTENTION_BACKEND=FLASHINFER
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_FLASH_ATTN_FORCE_ENABLE=1  
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export CUDA_VISIBLE_DEVICES=0
@@ -460,7 +647,7 @@ gcloud billing budgets list
 ```bash
 # Set optimal environment variables for GPU
 export VLLM_USE_V1=1
-export VLLM_ATTENTION_BACKEND=FLASHINFER
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_FLASH_ATTN_FORCE_ENABLE=1
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export CUDA_VISIBLE_DEVICES=0
@@ -529,7 +716,7 @@ python -c "import flash_attn; print(f'Flash Attention version: {flash_attn.__ver
 # Required for every benchmarking session
 export HF_TOKEN="your_huggingface_token"
 export VLLM_USE_V1=1
-export VLLM_ATTENTION_BACKEND=FLASHINFER  
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN  
 export VLLM_FLASH_ATTN_FORCE_ENABLE=1
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export CUDA_VISIBLE_DEVICES=0
