@@ -255,6 +255,43 @@ pkill -f vllm
 pkill -f "max serve"
 ```
 
+### Flash Attention Installation Issues
+```bash
+# ERROR: "nvcc not found" or "CUDA_HOME not set"
+# SOLUTION: Use pre-compiled wheels instead of compilation
+wget https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.3.12/flash_attn-2.8.0+cu124torch2.7-cp312-cp312-linux_x86_64.whl
+pip install flash_attn-2.8.0+cu124torch2.7-cp312-cp312-linux_x86_64.whl
+
+# ERROR: "metadata-generation-failed"
+# SOLUTION: Verify PyTorch and CUDA versions match wheel requirements
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.version.cuda}')"
+
+# ERROR: "ModuleNotFoundError: No module named 'flash_attn'"
+# SOLUTION: Activate correct virtual environment
+source vllm_optimized_env/bin/activate
+```
+
+### Package Manager Lock Issues
+```bash
+# ERROR: "dpkg frontend lock" or "apt held by process"
+# SOLUTION: Wait for background processes or force cleanup
+sudo fuser -v /var/lib/dpkg/lock-frontend
+sudo kill -9 <process_id>  # Use PID from above command
+sudo dpkg --configure -a
+sudo apt update
+```
+
+### VM Access and SSH Issues
+```bash
+# ERROR: "Permission denied (publickey)"
+# SOLUTION: Ensure proper gcloud authentication
+gcloud auth login
+gcloud config set project your-project-id
+
+# ERROR: "External IP address was not found"
+# SOLUTION: This is normal for IAP tunneling, connection will work
+```
+
 ## 🔍 Methodology Details
 
 ### Why This Approach is Better
@@ -308,6 +345,16 @@ gcloud compute instances create llm-benchmark-a100 \
     --maintenance-policy=TERMINATE \
     --metadata="install-nvidia-driver=True"
 ```
+
+**🎯 Recommended VM Image Selection:**
+- **Best**: `pytorch-latest-gpu` from `deeplearning-platform-release`
+  - ✅ Pre-installed NVIDIA drivers (550+)
+  - ✅ CUDA 12.4+ ready
+  - ✅ Python 3.10 (upgrade to 3.12 required)
+  - ✅ PyTorch ecosystem ready
+  - ✅ Docker and containerization tools
+- **Alternative**: `ubuntu-2204-lts` (requires more manual setup)
+- **Avoid**: Standard compute images (missing GPU drivers and CUDA)
 
 #### L4 GPU Instance (Cost-Effective)  
 ```bash
@@ -434,7 +481,9 @@ pip install flash-attn --no-build-isolation
 2. **Python Command**: VMs only have `python3`, need to create `python` symlink
 3. **Environment Persistence**: Environment variables don't persist across SSH sessions
 4. **Package Manager**: Install `pip` and upgrade to latest version
-5. **Flash Attention**: Requires compilation, can take 10+ minutes on first install
+5. **Flash Attention**: Use pre-compiled wheels to avoid 1+ hour compilation
+6. **CUDA Development**: Pre-compiled wheels eliminate need for nvcc/cuda-toolkit
+7. **MAX Environment**: Requires Pixi package manager for proper setup
 
 **🔧 VM Initialization Commands:**
 ```bash
@@ -455,6 +504,26 @@ python --version  # Should show Python 3.12.x
 nvidia-smi
 ```
 
+**⚡ Flash Attention Installation (CRITICAL for Fair Comparison):**
+```bash
+# Navigate to project directory
+cd sonic && source vllm_optimized_env/bin/activate
+
+# Download pre-compiled Flash Attention wheel (much faster than compilation)
+wget https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.3.12/flash_attn-2.8.0+cu124torch2.7-cp312-cp312-linux_x86_64.whl
+
+# Install Flash Attention wheel (takes seconds vs hours of compilation)
+pip install flash_attn-2.8.0+cu124torch2.7-cp312-cp312-linux_x86_64.whl
+
+# Verify installation
+python -c "import flash_attn; print(f'Flash Attention version: {flash_attn.__version__}')"
+```
+
+**📦 Alternative Flash Attention Sources:**
+- **Primary**: [mjun0812/flash-attention-prebuild-wheels](https://github.com/mjun0812/flash-attention-prebuild-wheels/releases)
+- **Windows**: [sunsetcoder/flash-attention-windows](https://github.com/sunsetcoder/flash-attention-windows)
+- **Official**: [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) (requires compilation)
+
 **🔐 Environment Variables (Set Every Session):**
 ```bash
 # Required for every benchmarking session
@@ -466,11 +535,6 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 export CUDA_VISIBLE_DEVICES=0
 ```
 
-**⏱️ Expected Setup Times:**
-- Environment setup: 15-20 minutes
-- Flash Attention compilation: 5-10 minutes  
-- Full benchmark (quick): ~10 minutes
-- Full benchmark (complete): ~30 minutes
 
 #### Memory Management Tips
 - **Monitor Usage**: `nvidia-smi -l 1` for real-time monitoring

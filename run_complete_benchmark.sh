@@ -404,7 +404,7 @@ cat > "$RESULTS_DIR/benchmark_summary.md" << EOF
 - **Hardware**: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo "GPU info unavailable")
 
 ## Configuration
-- **vLLM**: v1 engine, FLASHINFER attention, bfloat16, 90% GPU memory
+- **vLLM**: v1 engine, FLASH_ATTN attention, bfloat16, 90% GPU memory
 - **MAX**: Official Llama-3-8B-Instruct settings, HF transfer enabled
 - **API**: Both frameworks tested via OpenAI-compatible endpoints
 
